@@ -5750,11 +5750,32 @@ void tcp_rcv_established(struct sock *sk, struct sk_buff *skb)
 	 *	 space for instance)
 	 *	PSH flag is ignored.
 	 */
+/*
+	5758	tcp_flag_word(th)首先获取TCP首部中第4个32位字，然后和TCP_HP_BITS作与 操作，屏蔽保留的位和PSH,最后和预测标志比较，
+	如果通过则还需进行首部预测的其他比 较，否则直接执行慢速路径。在众多标志位中，32位的确认序号字段和ACK标志总是TCP首部的一部分，
+	因此发送 ACK无需任何代价，一旦一个连接建立起来，ACK标志总是被设置为1。而PSH标志位是用 来通知对方尽快接收的，因此在预测标
+	志中忽略它。当预测标志为0时，则表示关闭了首部预 测，必须慢速路径执行。
+首部标志如下，预测即表示，除了预留的位和push位，其他位必须相同，否则会走慢速路径。这就是tcp_flag_word(th) & TCP_HP_BITS) == tp->pred_flags比较的原因
+	enum {
+		TCP_FLAG_CWR = __constant_cpu_to_be32(0x00800000),
+		TCP_FLAG_ECE = __constant_cpu_to_be32(0x00400000),
+		TCP_FLAG_URG = __constant_cpu_to_be32(0x00200000),
+		TCP_FLAG_ACK = __constant_cpu_to_be32(0x00100000),
+		TCP_FLAG_PSH = __constant_cpu_to_be32(0x00080000),
+		TCP_FLAG_RST = __constant_cpu_to_be32(0x00040000),
+		TCP_FLAG_SYN = __constant_cpu_to_be32(0x00020000),
+		TCP_FLAG_FIN = __constant_cpu_to_be32(0x00010000),
+		TCP_RESERVED_BITS = __constant_cpu_to_be32(0x0F000000),
+		TCP_DATA_OFFSET = __constant_cpu_to_be32(0xF0000000)
+	};
 
-	if ((tcp_flag_word(th) & TCP_HP_BITS) == tp->pred_flags &&
-	    TCP_SKB_CB(skb)->seq == tp->rcv_nxt &&
-	    !after(TCP_SKB_CB(skb)->ack_seq, tp->snd_nxt)) {
-		int tcp_header_len = tp->tcp_header_len;
+
+
+	*/
+	if ((tcp_flag_word(th) & TCP_HP_BITS) == tp->pred_flags && //除了预留的位和push位，其他位必须相同，否则会走慢速路径
+	    TCP_SKB_CB(skb)->seq == tp->rcv_nxt &&  //接收的skb序列号必须是期望的序列号
+	    !after(TCP_SKB_CB(skb)->ack_seq, tp->snd_nxt)) { //ack的序列号必须在未发送的序列号之前
+		int tcp_header_len = tp->tcp_header_len; //tcp头长度
 
 		/* Timestamp header prediction: tcp_header_len
 		 * is automatically equal to th->doff*4 due to pred_flags
@@ -5762,8 +5783,9 @@ void tcp_rcv_established(struct sock *sk, struct sk_buff *skb)
 		 */
 
 		/* Check timestamp */
-		if (tcp_header_len == sizeof(struct tcphdr) + TCPOLEN_TSTAMP_ALIGNED) {
-			/* No? Slow path! */
+		if (tcp_header_len == sizeof(struct tcphdr) + TCPOLEN_TSTAMP_ALIGNED) { //通过TCP首部长度来检测TCP首部中是否仅存在时间戳选项
+			//仅仅通过长度检测不够严谨，所以还需要对类型进行检查	
+	    	/* No? Slow path! */ 
 			if (!tcp_parse_aligned_timestamp(tp, th))
 				goto slow_path;
 

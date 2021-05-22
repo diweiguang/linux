@@ -141,7 +141,7 @@ struct dst_entry {
 	atomic_t		__refcnt;	/* 64-bit offset 64 */
 #endif
 	int			__use;
-	unsigned long		lastuse;
+	unsigned long		lastuse;记录该表项最后一次被使用的时间戳。当缓存查找成功时更新该时间戳，垃圾回收程序使 用该时间戳来决定最应该被释放表项。
 	struct lwtunnel_state   *lwtstate;
 	struct rcu_head		rcu_head;
 	short			error;
