@@ -1709,20 +1709,18 @@ static int __dev_queue_xmit(struct sk_buff *skb, struct net_device *sb_dev) {
 			}
 	......
 }
-
-
-		*/
+*/
 		
-		sk_mark_napi_id(sk, skb); 
-		if (dst) {
-			if (inet_sk(sk)->rx_dst_ifindex != skb->skb_iif ||
-			    !INDIRECT_CALL_1(dst->ops->check, ipv4_dst_check,
+		sk_mark_napi_id(sk, skb);  //将skb进来的队列编号保持到sock中
+		if (dst) { //如果路由信息存在
+			if (inet_sk(sk)->rx_dst_ifindex != skb->skb_iif ||    //1. 如果报文进来的接口和socket对应的路由信息中接口信息不一致，将释放路由结构
+			    !INDIRECT_CALL_1(dst->ops->check, ipv4_dst_check, //2. 检查路由缓存有效性的函数是否存在，如果不存在释放已有的路哟缓存信息并置空
 					     dst, 0)) {
 				dst_release(dst);
 				sk->sk_rx_dst = NULL;
 			}
 		}
-		tcp_rcv_established(sk, skb);
+		tcp_rcv_established(sk, skb); //进入established状态的处理逻辑
 		return 0;
 	}
 

@@ -78,6 +78,50 @@ struct tcp_sack_block {
 #define TCP_SACK_SEEN     (1 << 0)   /*1 = peer is SACK capable, */
 #define TCP_DSACK_SEEN    (1 << 2)   /*1 = DSACK was received from peer*/
 
+
+>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+	tcp_options_received结构主要用来保存接收到的TCP选项信息，如时间戳、SACK等； 同时标志对端支持的特性，如对端是否支持窗口扩大因子、是否支持SACK等
+	
+194	long ts_recent_stamp
+记录从接收到的段中取出时间戳设置到ts_recent的时间，用于检测ts_recent的有效性： 如果自从该时间之后已经经过了超过24天的时间，则认为ts_recent已无效。
+195	u32 ts_recent
+下一个待发送的TCP段中的时间戳回显值。当一个含有最后发送ACK中确认序号的段到 达时，该段中的时间戳被保存在ts_recent中。而下一个待发送的TCP段的时间戳值是由SKB 中TCP控制块的成员when填入的，when字段值是由协议栈取系统时间变量jiffies的低32位。
+196	u32 rcv_tsval
+保存最近一次接收到对端的TCP段的时间戳选项中的时间戳值。
+197	u32 rcv_tsecr
+保存最近一次接收到对端的TCP段的时间戳选项中的时间戳回显应答。
+198	ul6 saw_tstamp : 1
+标识最近一次接收到的TCP段是否存在TCP时间戳选项，1为有，0为没有。
+199	tstamp_ok : 1
+标识TCP连接是否启用时间戳选项。在TCP建立连接过程中如果接收到TCP段中有时间 戳选项，则说明对端也支持时间戳选项，这时tstamp_ok会被置为1,表示该连接支持时间戳 选项，在随后的数据传输中，TCP首部中都会带有时商戳选项。
+200	dsack : 1
+标识下次发送的段中SACK选项(选择性确认)是否存在D-SACK (duplicatedACK)。
+201	wscale_ok : 1
+标志接收方是否支持窗口扩大因子，只能出现在SYN段中。
+2Q2 sack_ok : 4
+标识接收方是否支持SACKo如果为0则表示不支持SACK；如果为非0则表示支持 SACKo此外，因为sack_ok占有4位，因此在正常带有负荷的段中，其余位还有其他的含 义：第1位表示是否启用FACK拥塞避免，第2位表示在SACK选项中是否存在SSACK,第 3位保留。
+目前TCP协议主要包含四个版本：Tahoe、Reno、NewReno和SACK。
+•	Tahoe是早期的TCP版本，包括3个最基本的拥塞控制算 一“慢启动”、“拥塞避 免”和“快速重传”。
+•	Reno在TCP Tahoe的基础上增加了 “快速恢复”算法。
+•	NewReno对TCP Reno中的“快速恢复”算法进行了修正，考虑了一个发送窗口内有 多个数据包丢失的情况,•在Reno版中，发送端收到一个新的ACK后就退出“快速恢 复”阶段，而在NewRen。版中，只有当所有的数据包都被确认后才退出“快速恢复” 阶段，也是Linux支持的基本算法。
+• SACK关注的也是一个窗口内多个数据包丢失的情况，它避免了之前版本的TCP重传 —个窗口内所有数据包的情况，包括那些已经被接收端正确接收的数据包，仅重传那 些被丢弃的数据包。
+因此町以通过sack_ok来判定当前支持的算法，如果不支持TCP SACK,就判定当前只支 持NewReno,使用的宏为：
+#define IsReno(tp) ((tp)->rx_opt.sack_ok == 0)
+203	snd_wscale : 4
+发送窗口扩大因子，即要把TCP首部中滑动窗口大小左移snd_wscale位后，才是真正的 滑动窗口大小。在TCP首部中，滑动窗口大小值是16位的，而snd.wscale的值最大只能为 14,所以，滑动窗口值最大可被扩展到30位。在协议栈的实际实现可以看到窗口大小被 置为5840,扩大因子为2,即实际的窗口大小为5840vv2 = 23360B。
+204	rcv_wscale : 4
+接收窗口扩大因子。
+206	u8 eff_sacks
+下一个待发送的段中SACK选项的SACK数组大小，如果为0则可以认为没有SACKo
+207	u8 num_sacks
+下一个待发送的段中SACK选项的SACK块数，同时用来计算ef^sacks。
+208	ul6 user_mss
+为用户设置的MSS上限，与建立连接时SYN段中的MSS,两者之冋的最小值作为该连 接的MSS上限，存储在mss_clamp中。使用setsockopt/getsockopt系统调用TCP MAXSEG选 项设置/获取，有效值在8至§2767之间。	一
+209	ul6 mss_clamp
+该连接的对端MSS上限。user_mss与建立连接时SYN段中的MSS,两者之间的最小值 作为该连接的MSS±限。
+
+<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
 struct tcp_options_received {
 /*	PAWS/RTTM data	*/
 	int	ts_recent_stamp;/* Time we stored ts_recent (for aging) */

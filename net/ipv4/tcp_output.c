@@ -52,10 +52,10 @@
  */
 void tcp_mstamp_refresh(struct tcp_sock *tp)
 {
-	u64 val = tcp_clock_ns();
+	u64 val = tcp_clock_ns();//获取当前时间戳
 
-	tp->tcp_clock_cache = val;
-	tp->tcp_mstamp = div_u64(val, NSEC_PER_USEC);
+	tp->tcp_clock_cache = val; //缓存住 纳秒级别？
+	tp->tcp_mstamp = div_u64(val, NSEC_PER_USEC); //转成微妙保持到tcp_mstamp,记录最近接受的报文的时间
 }
 
 static bool tcp_write_xmit(struct sock *sk, unsigned int mss_now, int nonagle,

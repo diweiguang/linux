@@ -5722,8 +5722,8 @@ void tcp_rcv_established(struct sock *sk, struct sk_buff *skb)
 	/* TCP congestion window tracking */
 	trace_tcp_probe(sk, skb);
 
-	tcp_mstamp_refresh(tp);
-	if (unlikely(!sk->sk_rx_dst))
+	tcp_mstamp_refresh(tp); //保持当前接收报文的时间戳到tcp_sock->tcp_mstamp
+	if (unlikely(!sk->sk_rx_dst)) //如果socket对应的路由信息是空的，则调用sk_rx_dst_set函数对其进行设置
 		inet_csk(sk)->icsk_af_ops->sk_rx_dst_set(sk, skb);
 	/*
 	 *	Header prediction.
@@ -5740,7 +5740,7 @@ void tcp_rcv_established(struct sock *sk, struct sk_buff *skb)
 	 *	We do checksum and copy also but from device to kernel.
 	 */
 
-	tp->rx_opt.saw_tstamp = 0;
+	tp->rx_opt.saw_tstamp = 0; //标识最近一次接收到的TCP段是否存在TCP时间戳选项，1为有，0为没有
 
 	/*	pred_flags is 0xS?10 << 16 + snd_wnd
 	 *	if header_prediction is to be made
