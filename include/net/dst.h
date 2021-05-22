@@ -22,6 +22,79 @@
 
 struct sk_buff;
 
+
+>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+dst_entry结构被用于存储缓存路由项中独立于协议的信息。三层协议在另外的结构中存储 本协议中更多的私有信息(例如，IPv4使用ruble结构)。
+	struct dst_entry *next
+		
+	用于将分布在同一个散列表桶内的dst*ntry实例链接在一起。
+	atomic_t refcnt
+	引用计数。
+	int 	use
+	该表项已经被使用的次数（即缓存査找返回该表项的次数）。
+	注意：不要将这个值与rt_cache_stat[smp_processor_id（ ）].in_hit混淆：后者表示针对某个 
+	CPU的全局缓存命中次数。
+	43	struct dst_entry *child
+	56	unsigned short header_len
+	57	unsigned short nfheader_len
+	58	unsigned short trailer_len
+	61 struct dst_entry *path
+	68 struct xfrm_state *xfrm
+	这些字段与IPsec相关，本书不作论述。
+	44	struct net_device *dev
+	输出网络设备(即将报文送达目的地的发送设备)。
+	45	short error
+	当fib_lookup()査找失败时，错误码值会被保存在这个字段中，在之后ip_error()中使用该 值来决定如何处理本次路由査找失败，即决定生成哪一类ICMP消息。
+	46	short obsolete
+	用于标识本dst entry实例的可用状态，见表20-3 o
+	表 20-3 obsolete 取值
+	obsolete	描述
+	0 (默认值)	表示所在结构实例有效而旦可•以被使用
+	2	表示所在结构实例将被删除因而不能被使用
+	-1	被IPscc和IPv6使用但不被IPv4使用
+	
+	47	int flags
+	标志集合，见表20-4。
+	表20-4 Hags取值
+	flags	描述
+	DST_HOST	表示主机路山，即不是到网络或到•个广播/多播地址的路山
+	DST_NOXFRM	
+	DST_NOPOLICY	只用F IPsec,本巧不作论述
+	DST^NOHASH	
+	
+	53	unsigned long lastuse
+	记录该表项最后一次被使用的时间戳。当缓存查找成功时更新该时间戳，垃圾回收程序使 用该时间戳来决定最应该被释放表项。
+	54	unsigned long expires
+	表示该表项将过期的时间戳。
+	60 u32 metrics[RTAX_MAX]
+	多种度量值，TCP中多处使用。
+	63	unsigned long rate_last
+	64	unsigned long rate_tokens
+	这两个字段被用于对两种类型的ICMP消息限速。
+	ratejast为上一个ICMP重定向消息送出的时间戳。
+	rate tokens是己经向与该dst entry实例相关的目的地发送ICMP重定向消息的次数，因 此，(rate_tokens.l)也就是连续被目的地忽略的ICMP重定向消息的数目。
+	66	struct neighbour *neighbour
+	67	struct hh_cache *hh
+	neighbour是包含下一跳三层地址到二层地址映射的结构，hh是缓存的二层首部，参见 19.3.6 节。
+	70	int (*input)(struct sk_buff*)
+	71	int (*output)(struct sk_buff*)
+	分别表示处理输入报文和处理输出报文的函数。参见20.6节和20.7节。
+	74		u32 tclassid
+	基于路由表的classifier的标签，本书不作论述。
+	77	struct dst_ops *ops
+	用于处理dst_entry结构的虚函数表结构。
+	78	struct rcu_head rcu_head
+	处理互斥。
+	80 char info[0]
+	由于dst entiy结构是内嵌在rtable结构中的，因此通过info可以访问rtable结构的后续成 员，事实上亲使用该成员。
+
+
+
+<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
+
+
 struct dst_entry {
 	struct net_device       *dev;
 	struct  dst_ops	        *ops;

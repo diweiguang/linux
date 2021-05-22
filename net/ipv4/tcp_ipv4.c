@@ -194,6 +194,8 @@ static int tcp_v4_pre_connect(struct sock *sk, struct sockaddr *uaddr,
 	return BPF_CGROUP_RUN_PROG_INET4_CONNECT(sk, uaddr);
 }
 
+				  
+
 /* This will initiate an outgoing connection. */
 int tcp_v4_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 {
@@ -1674,15 +1676,44 @@ INDIRECT_CALLABLE_DECLARE(struct dst_entry *ipv4_dst_check(struct dst_entry *,
  * This is because we cannot sleep with the original spinlock
  * held.
  */
+ 软中断上下文
 int tcp_v4_do_rcv(struct sock *sk, struct sk_buff *skb)
 {
 	struct sock *rsk;
 
 	if (sk->sk_state == TCP_ESTABLISHED) { /* Fast path */
-		struct dst_entry *dst = sk->sk_rx_dst;
+		struct dst_entry *dst = sk->sk_rx_dst; /*socket 对应的路由信息*/
 
 		sock_rps_save_rxhash(sk, skb);
-		sk_mark_napi_id(sk, skb);
+	
+/*
+cpu : cpu 的编号
+real_num_tx_queues：the number of TX subqueues to allocate
+
+skb->queue_mapping = cpu % dev->real_num_tx_queues 
+队列mapping,算法如上。这样如果cpu比队列数少，就mapping值一样？？？？
+sk->sk_rx_queue_mapping = skb->queue_mapping - 1
+
+
+查看代码发现该mapping操作将会影响发送的时候，从哪个队列发送出去
+
+static int __dev_queue_xmit(struct sk_buff *skb, struct net_device *sb_dev) {
+	......
+		txq = netdev_core_pick_tx(dev, skb, sb_dev); 取到对应的队列号
+			q = rcu_dereference_bh(txq->qdisc);
+		
+			trace_net_dev_queue(skb);
+			if (q->enqueue) {
+				rc = __dev_xmit_skb(skb, q, dev, txq);
+				goto out;
+			}
+	......
+}
+
+
+		*/
+		
+		sk_mark_napi_id(sk, skb); 
 		if (dst) {
 			if (inet_sk(sk)->rx_dst_ifindex != skb->skb_iif ||
 			    !INDIRECT_CALL_1(dst->ops->check, ipv4_dst_check,

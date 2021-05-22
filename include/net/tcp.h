@@ -824,6 +824,61 @@ static inline u64 tcp_skb_timestamp_us(const struct sk_buff *skb)
 
 #define TCPHDR_SYN_ECN	(TCPHDR_SYN | TCPHDR_ECE | TCPHDR_CWR)
 
+
+
+
+tcp skb cb 结构
+TCP层在SKB区中有个私有信息控制块，即skb_buff结构的cb成员，TCP利用这个字 段存储了一个tcp_skb_cb结构。在TCP层，用宏TCP_SKB_CB实现访问该信息控制块，以 增强代码的可读性。对这个私有信息控制块的赋值一駁在本层接收到段或发送段之前进行。 例如，tcp_v4_rcv()是TCP层接收入口函数，当接收到TCP段并对其进行必要的校验后，就 会对此段的tcp_skb_cb进行设置。而发送过程中，大多数是在生成TCP段时，或是在对 TCP段进行分段时设置，例如，创建TCP分段函数tcp_fragment(),在MAC层发送前进行 tso分段的函数tso_fragment(),进行路径MTU探测的函数tcp_mtu_probe(),发送FEN段的 函数tcp_send_fin(),这些函数都会创建一个TCP段。在发送TCP段前会根据tcp_skb_cb的 值进行处理或从中取值，如发送TCP段的函数tcp_transmit_skb(),重传TCP段的函数 tcp_retransmit_skb()。
+522	struct tcp_skb_cb {
+523	union {
+524	struct inet_skb_parm h4;
+525	#if defined(CONFIGIPV6)	I| defined (CONFIG_IPV6_MODULE)
+526	struct	inet6_skb_parm h6;
+527	#endif		
+528	} header;	/* For incoming frames	*/
+529	_u32	seq;	/* Starting sequence number */
+530	_u32	endseq;	/* SEQ + FIN + SYN + datalen */
+531	~u32	when;	/* used to compute rtt's */
+532	_u8	flags;	/* TCP header flags.	*7
+546	_u8	sacked;	/* State flags for SACK/FACK. */
+552	—ul6	urg_ptr;	/* Valid w/URG flags is set.	*/
+560	二 u32	ack_seq;	/* Sequence number ACK'd */
+561	}；		
+523	union {・・・	} header	
+在TCP处理接收到的TCP段之前，下层协议(IPv4或IPv6)会先处理该段，且会利用 SKB中的控制块来记录每一个包中的信息，例如IPv4会记录从IP首部中解析出的IP首部选 项。为了不破坏三层协议层私有数据，在SKB中TCP控制块的前部定义了这个结构，这包括 IPv4和IPv6,本书中只讨论IPv4。inet_skb^parm结构参见11.2节。
+529	 	u32 seq
+530	 	u32 end_seq
+seq为当前段开始序号，而end_seq为当前段开始序号加上当前段数据长度，如果标志域 中存在SYN或FIN标志，则还需加1,因为SYN和FIN标志都会消耗一个序号。利用end_ seq、seq和标志，很容易得到数据长度。
+531	 	u32 when
+段发送时间及段发送时记录的当前jiffies值。必要时，此值也用来计算RTT。
+532	_u8 flags
+记录原始TCP首部标志。发送过程中，tcp_transmit_skb()在发送TCP段之前会根据此标志 来填充发送段的TCP首部的标志域；
+接收过程中，会提取接收段的TCP首部标志到该字段中。
+546  	u8 sacked
+主要用来描述段的重传状态，同时标识包是否包含紧急数据，见表26-14o检査接收到的  	
+SACK,根据需要更新TCPCB_TAGBITS标志位，重传引擎会根据该标志位来确定是否需要重 传。一旦重传超时发生，所有的SACK状态标志将被清除，因为无需再关心其状态。无论通
+ 	
+过哪种方式重传了包，重传超时或快速重传，都会设置TCPCB EVER RETRANS标志位。 tcp_retransmit_skb()中设置 TCPCB_SACK_RETRANS 和 TCPCB_EVER_RETRANS 标志位， tcp_enter_loss()中则清除 TCPCB_SACK RETRANS 标志位。
+表26-14 sacked的取值
+sacked	描述
+TCPCB_SACKED_ACKED	该段通过SACK被确认
+TCPCB,SACKED_REFRANS	该段己经東传
+TCPCB_LOST	该段在传输过程中已Z失
+TCPCB_URG	该段中存在带外数据
+
+值得注意的是，在描述包的重传状态之前的sacked值并非段的重传状态，而是SACK选 项在TCP首部中的偏移，此值在接收TCP段之后的tcp_parse_options()中解析TCP选项时被
+ 	
+赋值。而后在tcp_sacktag write_queue()中才真正根据SACK选项标记段的重传状态等。
+559	 	ul6 urg_ptr
+如果存在TCPCB_FLAG_URG标志，则说明TCP段中有紧急数据，而urg_ptr则用来保 存TCP首部中紧急指针值。
+560	 	u32 ack_seq
+接收到的TCP段首部中的确认序号。
+>>>>>>>>>>>>>>>>>>>>>>tcp_skb_cb解释>>>>>>>>>>>>>>>>>>>>>>>>>
+
+
+
+
+
 /* This is what the send packet queuing engine uses to pass
  * TCP per-packet control information to the transmission code.
  * We also store the host-order sequence numbers in here too.

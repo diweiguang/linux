@@ -46,6 +46,71 @@
 struct fib_nh;
 struct fib_info;
 struct uncached_list;
+/*
+
+>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+	IPv4使用rtable结构来存储缓存内的路由表项。nJ以通过査看/proc/net/rt_cache文件，或 者通过ip route list cache和route -C命令来列出路由缓存的内容
+	
+dst_entry结构作为一部分嵌入到rtable结构中，而dst_entry结构中的第一个成员next就 是用于链接分布在同一个散列桶内的rtable实例，为了便于访问next,因此将dst和rt_next联 合起来。虽然指针的名称不同，但它们所指向的内存位置是相同的。
+59 struct in_device *idev
+指向输出网络设备的IPv4协议族中的IP配置块。注意：对送往本地的输入报文的路由， 输出网络设备设置为回环设备。
+61 unsigned rt_flags
+用于标识路由表项的一些特性和标志，见表20-U
+表20-1路由表项的标志
+rt.flags	描述
+RTCF_NOTIFY	路由表项的所有变化通过netlink通知给感兴趣的用户空间应用程序，该选項还没仃完全实现。利 用诸如ip route等命令来设置该标志
+RTCF_REDIRECTED	由接收到的ICMP.RED1REC1消息作出响应而添加 条路由缓存项，参见20.10节
+RTCF_DORED1RECT	表示并不是股优路山.ip_forward()依据该标志和其他信,R・决定是杏需要发送ICMP雨定向消息。 例如，如果报文是基于源泌而路由，就不应当生成1CMP ＜定向消息
+RTCF_DIRECTSRC	不正确的源地址。ICMP模块不会对来闩此源地址的地址掩码诵求消息作出冋应•每当调用 fib_validate_source()检査到接收报文的源地址通过-个木地作用范围(RT„SCOPE_HOST)的下 跳 是可达时，就设置该标志
+RTCF_SNAT RTCF_DNAT RTCFNAT	已废除
+RTCF_BROADCAST	路由的目的地址是•个广播地址
+RTCF_MULT】CAST	路山的日的地址是•个多播地址
+RTCF_LOCAL	路山的目的地址是•个本地地址(即本地接口上配置的某个地址)。对本地广播地址和本地多播地 址也设置该标志，参见 ip_route_input_slow()和 ip routc_input_mc()
+RTCF_ REJECT	未被使用。依据IPROUTE2软件包的ip rule命令的语法，在该命令中冇 个关鍵?• reject,但该美 键字还未被接受
+RTCF TPROXY	未使用
+RICF_DIRECTDST	未使用
+RTCF_FAST	已废除
+RTCF_MASQ	IPv4已不使用
+62 _ul6 rt_type
+路由表项的类型，见表20-2。它间接定义了当路由查找匹配时应采取的动作。
+	表20-2路由类型
+rt.type	描述
+RIN _ UNSPEC	定义-个未初始化的值.例如.当从路由表中删除•个衣项时使用该債，这是因为删除操作不需 要指定路由表项的类型
+
+（续）
+rt.type	描述
+RTN_LOCAL	日的地址被fie置为•个本地接口的地址
+RTN _UNICAST	该路山是•条到単播地址的直连或1F直连（通过 个网关）¥备山。当用户通过ip route命令添加捋 由伊没有指定其他路由类型时，路山类型欧认设置为RTN_UNICAST
+RTN_MULTICAST	目的地址是-个参播地址
+RTN_BROADCAST	日的地址是•个广播地城。匹配的ingress报文以广播方式送往本地，匹配的egress报文以广播方 式发送出去
+RTN_ANYCAST	匹配的输入报文以广播方式送往本地，匹配的输出报文以甲播发送出去。IPv4没冇该类型
+RTN_BLACKHOLE RTN_UNREACHABLE R1T4_PROH1B1T RTN_THROW	这些值与特定的管理配乾而不是与日的地址类型相关联
+RTN_NAT	巳废弃
+RTNXRESOLVE	有个外部解析器来处理该路由，目前尚未实现该功能
+
+63  	ul6 rt_multipath_alg
+添识多路话缓存算法，元创建路由表项时根据相关路由项的配置来设置。
+65	 	be32 rt_dst
+66	 	be32 rt_src
+目的IP地址和源IP地址。
+67	int rt_iif
+输入网如设备标识，从输入网络设备的net_device数据结构中得到。对本地生成的流量 （因此不是从任何接口上接收到的），该字段被设置为出设备的ifindex字段。对本地生成的报 文，fl中的iif字段被设置为0。
+70  	be32 rt_gateway
+当目的主机为直连时，即在同一链路匕 gateway表示目的地址。当需要通过一个网关 到达目的地时，rt^gateway被设置为路由项中的下一跳的网关。
+73 struct flowi fl
+用于缓存査找的搜索的条件组合，参见20.2.2节。
+76	 	be32 rt_spec_dst
+首选源地址。
+添加到路由缓存内的路由缓存项是单向的。但是在一些情况下，接收到报文可能触发一个 动作，要求本地主机选择一个源IP地址，以便在向发送方回送报文时使用。这个地址，即首
+ 	
+选源IP地址，必须与路由该输入报文的路由缓存项保存在一起。首选源1P地址被保存在  	
+rt_spec_dst字段内，下面是使用该地址的两种情况：
+1）	当一个主机接收到一个ICMP回显请求消息时（常用的ping命令），如果主机没有明 确配置为不作出回应，则该主机返回一个1CMP回显应答消息。对该输入ICMP回显请求消息 选择路由，路由项的rt_spec_dst被用作路由ICMP回显请求消息而进行路由査找的源地址。参 见 14.6.2 节的 icmp replyO和 11.11.2 节的 ip_send_reply（）o
+2）	记录路由IP选项和时间戳IP选项要求途经主机的IP地址记录到选项中。
+77	struct inet_peer *peer
+指向与目的地址相关的对端信息块。 
+<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+*/
 struct rtable {
 	struct dst_entry	dst;
 
