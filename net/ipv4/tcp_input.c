@@ -3759,10 +3759,10 @@ static int tcp_ack(struct sock *sk, const struct sk_buff *skb, int flag)
 	/* If the ack includes data we haven't sent yet, discard
 	 * this segment (RFC793 Section 3.9).
 	 */
-	if (after(ack, tp->snd_nxt))
+	if (after(ack, tp->snd_nxt)) // 如果收到的ack序列号在发送窗口以后，直接返回丢弃
 		return -1;
 
-	if (after(ack, prior_snd_una)) {
+	if (after(ack, prior_snd_una)) { //如果ack在 snd_una和snd_nxt之间，表示ack合法，打上FLAG_SND_UNA_ADVANCED标记，表示将要改变snd_una
 		flag |= FLAG_SND_UNA_ADVANCED;
 		icsk->icsk_retransmits = 0;
 
