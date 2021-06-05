@@ -1073,6 +1073,16 @@ struct ack_sample {
  * setting cwnd and pacing rate.
  * A sample is invalid if "delivered" or "interval_us" is negative.
  */
+ /*
+速率样本测量（原始/重传）数据的数量
+  在时间间隔“interval_us”内“交付”的数据包。
+   tcp_rate.c 代码填写速率样本，以及拥塞
+   定义 cong_control 函数的控制模块在最后运行
+   的 ACK 处理可以选择在以下情况下参考此示例
+   设置 cwnd 和起搏率。
+   如果“delivered”或“interval_us”为负数，则样本无效
+
+*/
 struct rate_sample {
 	u64  prior_mstamp; /* starting timestamp for interval */
 	u32  prior_delivered;	/* tp->delivered at "prior_mstamp" */

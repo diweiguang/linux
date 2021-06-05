@@ -33,6 +33,24 @@ struct page;
 	
 	there is also PREFETCH_STRIDE which is the architecure-preferred 
 	"lookahead" size for prefetching streamed operations.
+
+prefetch(x) 尝试抢先获取指向的内存
+通过地址“x”进入 CPU L1 缓存。
+prefetch(x) 不应导致任何类型的异常， prefetch(0) 是
+具体可以。
+
+prefetch() 应该由架构定义，如果不是，则
+#define 下面提供了一个无操作定义。
+
+有 3 个 prefetch() 宏：
+
+prefetch(x) - 在“x”处预取缓存行以供读取
+prefetchw(x) - 在“x”处预取缓存行以进行写入
+spin_lock_prefetch(x) - 预取自旋锁 *x 以供获取
+
+还有 PREFETCH_STRIDE 是架构首选
+预取流式操作的“前瞻”大小。 
+
 	
 */
 

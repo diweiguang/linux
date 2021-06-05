@@ -3525,7 +3525,7 @@ static bool __tcp_oow_rate_limited(struct net *net, int mib_idx,
 	if (*last_oow_ack_time) {
 		s32 elapsed = (s32)(tcp_jiffies32 - *last_oow_ack_time);
 
-		if (0 <= elapsed && elapsed < net->ipv4.sysctl_tcp_invalid_ratelimit) {
+		if (0 <= elapsed && elapsed < net->ipv4.sysctl_tcp_invalid_ratelimit) { //每2个挑战ack的发送时间间隔应该小于sysctl_tcp_invalid_ratelimit，默认值500ms
 			NET_INC_STATS(net, mib_idx);
 			return true;	/* rate-limited: don't send yet! */
 		}
@@ -3558,38 +3558,49 @@ bool tcp_oow_rate_limited(struct net *net, const struct sk_buff *skb,
 static void tcp_send_challenge_ack(struct sock *sk, const struct sk_buff *skb)
 {
 	/* unprotected vars, we dont care of overwrites */
-	static u32 challenge_timestamp;
-	static unsigned int challenge_count;
+	static u32 challenge_timestamp;  //注意是静态变量
+	static unsigned int challenge_count; //注意是静态变量
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct net *net = sock_net(sk);
 	u32 count, now;
 
 	/* First check our per-socket dupack rate limit. */
-	if (__tcp_oow_rate_limited(net,
+	if (__tcp_oow_rate_limited(net, //挑战ack的频率检查，每2个挑战ack的发送时间间隔应该小于sysctl_tcp_invalid_ratelimit，默认值500ms
 				   LINUX_MIB_TCPACKSKIPPEDCHALLENGE,
 				   &tp->last_oow_ack_time))
 		return;
 
+/*
+		算法如下：在首次进入此函数时，挑战时间戳和挑战次数都为空，获取到当前的时间（now的单位秒），此时now必定不等于挑战时间戳，
+		将挑战次数初始化为tcp_challenge_ack_limit设定值的一半，与零至tcp_challenge_ack_limit值之间的随机值的和，并且初始化挑战时间戳。
+		之后，如果再次进入函数时，当前时间还在同一秒内，判断挑战次数是否为零，不成立递减挑战次数，发送挑战ACK报文。
+		如果再次进入函数时，当前时间已经进入下一秒，重新初始化挑战次数challenge_count和挑战时间戳challenge_timestamp。
+		在同一秒钟内，已经发送了超过挑战次数的ACK报文后，不在发送挑战ACK报文
+		*/
+
 	/* Then check host-wide RFC 5961 rate limit. */
-	now = jiffies / HZ;
+	now = jiffies / HZ; //当前时间除1秒的时间，注意这里会取整，即1.5秒，结果是1，只有2.x才会是2，表示这里关心1秒内的数据包频率
 	if (now != challenge_timestamp) {
-		u32 ack_limit = net->ipv4.sysctl_tcp_challenge_ack_limit;
+		u32 ack_limit = net->ipv4.sysctl_tcp_challenge_ack_limit; //sysctl_tcp_challenge_ack_limit初始值1000
 		u32 half = (ack_limit + 1) >> 1;
 
 		challenge_timestamp = now;
 		WRITE_ONCE(challenge_count, half + prandom_u32_max(ack_limit));
 	}
-	count = READ_ONCE(challenge_count);
+	count = READ_ONCE(challenge_count); //如果是在一秒内进入该函数，则由于上面代码走不到，还是会读取到之前的challenge_count值，对该值进行递减，一旦超过一秒则会走上面逻辑
+										//上面逻辑会重置challenge_count值，从这里也可以看出，每秒允许的挑战ack个数是个随机值
 	if (count > 0) {
-		WRITE_ONCE(challenge_count, count - 1);
+		WRITE_ONCE(challenge_count, count - 1); //count大于0表示本秒内还未超过包个数限制，所以会直接发送挑战ack
 		NET_INC_STATS(net, LINUX_MIB_TCPCHALLENGEACK);
-		tcp_send_ack(sk);
+		tcp_send_ack(sk); //发送挑战ack
 	}
 }
 
 static void tcp_store_ts_recent(struct tcp_sock *tp)
 {
-	tp->rx_opt.ts_recent = tp->rx_opt.rcv_tsval;
+	tp->rx_opt.ts_recent = tp->rx_opt.rcv_tsval; //ts_recent 下一个待发送的TCP段中的时间戳回显值。当一个含有最后发送ACK中确认序号的段到 达时，
+												 //该段中的时间戳被保存在ts_recent中。而下一个待发送的TCP段的时间戳值是由SKB 中TCP控制块的成员when填入的，
+												 // when字段值是由协议栈取系统时间变量jiffies的低32位。
 	tp->rx_opt.ts_recent_stamp = ktime_get_seconds();
 }
 
@@ -3690,16 +3701,26 @@ static int tcp_ack(struct sock *sk, const struct sk_buff *skb, int flag)
 {
 	struct inet_connection_sock *icsk = inet_csk(sk);
 	struct tcp_sock *tp = tcp_sk(sk);
-	struct tcp_sacktag_state sack_state;
+	struct tcp_sacktag_state sack_state; // ????????????????????
 	struct rate_sample rs = { .prior_delivered = 0 };
+	/*
+	rate_sample 速率样本测量（原始/重传）数据的数量
+  在时间间隔“interval_us”内“交付”的数据包。
+   tcp_rate.c 代码填写速率样本，以及拥塞
+   定义 cong_control 函数的控制模块在最后运行
+   的 ACK 处理可以选择在以下情况下参考此示例
+   设置 cwnd 和起搏率。
+   如果“delivered”或“interval_us”为负数，则样本无效
+	*/
 	u32 prior_snd_una = tp->snd_una;
 	bool is_sack_reneg = tp->is_sack_reneg;
-	u32 ack_seq = TCP_SKB_CB(skb)->seq;
-	u32 ack = TCP_SKB_CB(skb)->ack_seq;
+	u32 ack_seq = TCP_SKB_CB(skb)->seq; // seq为当前段开始序号，而end_seq为当前段开始序号加上当前段数据长度，如果标志域 中存在SYN或FIN标志，
+										// 则还需加1,因为SYN和FIN标志都会消耗一个序号。利用end_ seq、seq和标志，很容易得到数据长度。
+	u32 ack = TCP_SKB_CB(skb)->ack_seq; //ack_seq 接收到的TCP段首部中的确认序号
 	int num_dupack = 0;
-	int prior_packets = tp->packets_out;
-	u32 delivered = tp->delivered;
-	u32 lost = tp->lost;
+	int prior_packets = tp->packets_out; //发出去但未确认包个数
+	u32 delivered = tp->delivered; // 交付的数据包(不包括ack包)总数，包括 重传的
+	u32 lost = tp->lost; 
 	int rexmit = REXMIT_NONE; /* Flag to (re)transmit to recover losses */
 	u32 prior_fack;
 
@@ -3708,17 +3729,29 @@ static int tcp_ack(struct sock *sk, const struct sk_buff *skb, int flag)
 	sack_state.sack_delivered = 0;
 
 	/* We very likely will need to access rtx queue. */
-	prefetch(sk->tcp_rtx_queue.rb_node);
+	/*
+	有一个共识是：程序访问的变量如果都能在系统内存cache中则能提升性能，prefetch是内核中一个预热内存函数，这样下次遍历时就能高效命中内存cache，从而提升程序性能。
+
+上面的代码中遍历链表时下次访问的内存为pos->next，故在每次遍历时对pos->next进行预热，从而提升性能。
+	*/
+	prefetch(sk->tcp_rtx_queue.rb_node); //预先读取，增加后续命中缓存的概率
 
 	/* If the ack is older than previous acks
 	 * then we can probably ignore it.
 	 */
-	if (before(ack, prior_snd_una)) {
+	if (before(ack, prior_snd_una)) { //如果收到的ack已经被确认过，
 		/* RFC 5961 5.2 [Blind Data Injection Attack].[Mitigation] */
-		if (before(ack, prior_snd_una - tp->max_window)) {
-			if (!(flag & FLAG_NO_CHALLENGE_ACK))
-				tcp_send_challenge_ack(sk, skb);
-			return -1;
+		//接收方通告过的最大接收窗口值
+		if (before(ack, prior_snd_una - tp->max_window)) { //如果ack 完全在发送窗口外
+			if (!(flag & FLAG_NO_CHALLENGE_ACK)) //该函数中flag是0，所以这里必定走进tcp_send_challenge_ack
+												1. 数据包触发挑战ack
+				tcp_send_challenge_ack(sk, skb); //发送挑战ack如果接收报文的确认序号小于本地套接口待确认序号，表明为一个已经确认过的序号，
+												 //并且其确认序号在套接口当前待确认序号减去本地发送窗口之前，内核认为此报文很可能并非对端发送，
+												 //即其为攻击者构造出来的报文，合法的报文确认序号ACK的范围：((SND.UNA - MAX.SND.WND) <= SEG.ACK <= SND.NXT)。
+												 //否则，不在此范围内认为是盲数据注入攻击Blind Data Injection Attack。但是，有可能并非攻击者发送，
+												 //而是来自对端的报文，此时回复挑战ACK报文，使对端有机会修正其确认序号ACK
+												 2. 复位RST攻击
+												 3. SYN攻击
 		}
 		goto old_ack;
 	}
@@ -4102,6 +4135,7 @@ static bool tcp_parse_aligned_timestamp(struct tcp_sock *tp, const struct tcphdr
 	}
 	return false;
 }
+
 
 /* Fast parse options. This hopes to only see timestamps.
  * If it is wrong it falls back on tcp_parse_options().
@@ -5790,7 +5824,7 @@ void tcp_rcv_established(struct sock *sk, struct sk_buff *skb)
 				goto slow_path;
 
 			/* If PAWS failed, check it more carefully in slow path */
-			if ((s32)(tp->rx_opt.rcv_tsval - tp->rx_opt.ts_recent) < 0)
+			if ((s32)(tp->rx_opt.rcv_tsval - tp->rx_opt.ts_recent) < 0) //时间戳用来判断是否发生了序列号回环
 				goto slow_path;
 
 			/* DO NOT update ts_recent here, if checksum fails
@@ -5809,13 +5843,14 @@ void tcp_rcv_established(struct sock *sk, struct sk_buff *skb)
 				 */
 				if (tcp_header_len ==
 				    (sizeof(struct tcphdr) + TCPOLEN_TSTAMP_ALIGNED) &&
-				    tp->rcv_nxt == tp->rcv_wup)
+				    tp->rcv_nxt == tp->rcv_wup)  //rcv_wup标识最早接收但未确认的段的序号，即当前接收窗口的左端。在发送ACK时，由rcv_nxt 更新，
+				    							 //因此rcv_wup的更新常比rcv_nxt滞后一些
 					tcp_store_ts_recent(tp);
 
 				/* We know that such packets are checksummed
 				 * on entry.
 				 */
-				tcp_ack(sk, skb, 0);
+				tcp_ack(sk, skb, 0); //发送ack
 				__kfree_skb(skb);
 				tcp_data_snd_check(sk);
 				/* When receiving pure ack in fast path, update
