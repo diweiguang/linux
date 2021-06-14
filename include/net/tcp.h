@@ -682,25 +682,44 @@ static inline u32 __tcp_set_rto(const struct tcp_sock *tp)
 
 static inline void __tcp_fast_path_on(struct tcp_sock *tp, u32 snd_wnd)
 {
-	tp->pred_flags = htonl((tp->tcp_header_len << 26) |
+	// 由于预测标志需直接与TCP首部中的字段值作比较，因此也以网络字节序存储
+	
+	//将TCP首部长度tcPi_header_len左移26位实际上是获取TCP首部中32位字数 (tcp header len右移2位)，以及设置获取到的数值到预
+	//测标志的27-31位处(tcp_header_len 左移28位)两个操作的组合，优化后就是直接左移26位。 
+	//470、471意思就很简单了，预测的是ACK标志位和对方的接收窗口大小
+	//预测标志存储在tcp_sock结构的pred_flags成员中，是首部预测的条件之一，但是必要的条 件，如果与预测标志不符，
+	//则只能执行慢速路径。预测标志为32位无符号整型，格式见图31-3。
+	// s	?	0	0	0	1	0	0	0	0	snd_wnd
+
+	//如用数字描述为：0xS?10 « 16 + snd_wndo其中27〜31位的“S”为TCP首部32位字 数，也就是tp->tcp_header_len >> 2。"？”通常为零。snd_wnd则是本端发送窗口大小
+	
+	tp->pred_flags = htonl((tp->tcp_header_len << 26) |  //此处设置socket快速路径的预测标记
 			       ntohl(TCP_FLAG_ACK) |
 			       snd_wnd);
 }
 
 static inline void tcp_fast_path_on(struct tcp_sock *tp)
 {
+	//满足以上条件就可以调用tcp_fast_path_on()来设置预测标志了。
+
 	__tcp_fast_path_on(tp, tp->snd_wnd >> tp->rx_opt.snd_wscale);
 }
+
+//设置预测标志的条件是：
+//1)	缓存乱序队列为空，说明网络比较畅通。
+//2)	接收窗口不为0,说明当前还能接收数据。
+//3)	当前已使用的接收缓存未达到上限，也说明冃前还能接收数据。
+//4)	没有接收到紧急指针，快速路径不处理带外数据。
 
 static inline void tcp_fast_path_check(struct sock *sk)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 
-	if (RB_EMPTY_ROOT(&tp->out_of_order_queue) &&
-	    tp->rcv_wnd &&
-	    atomic_read(&sk->sk_rmem_alloc) < sk->sk_rcvbuf &&
-	    !tp->urg_data)
-		tcp_fast_path_on(tp);
+	if (RB_EMPTY_ROOT(&tp->out_of_order_queue) && //如果乱序队列是空,说明网络通常
+	    tp->rcv_wnd &&	//接收窗口非0，说明当前还能接收数据
+	    atomic_read(&sk->sk_rmem_alloc) < sk->sk_rcvbuf && //socket实际使用的接收缓存小于接收缓存，说明还能接收数据
+	    !tp->urg_data) //且非紧急数据，因为快速路径不处理带外数据
+		tcp_fast_path_on(tp); //快速路径打开
 }
 
 /* Compute the actual rto_min value */
@@ -1401,7 +1420,7 @@ static inline void tcp_init_wl(struct tcp_sock *tp, u32 seq)
 
 static inline void tcp_update_wl(struct tcp_sock *tp, u32 seq)
 {
-	tp->snd_wl1 = seq;
+	tp->snd_wl1 = seq; //记录更新发送窗口的那个ACK段的序号，用来判断是否需要更新窗口。如果后续收到的ACK段的序号大于snd_wll,则说明需更新窗口，否则无需更新
 }
 
 /*
@@ -1435,16 +1454,27 @@ void tcp_cwnd_restart(struct sock *sk, s32 delta);
 
 static inline void tcp_slow_start_after_idle_check(struct sock *sk)
 {
+
+	// tcp_slow_start_afteridle ,发送方闲置后，标识是否启用慢启动算法，参见 RFC2861,取值见表 26-5o
+	//拥塞窗口控制相应连接在网络中的TCP段数。然而，发送方长时间无响应或者由于应用 程序的限制会导致拥塞窗口无效，此时，拥塞窗口不能反映网络的当前状况，为解决这个问 题，RFC2861为TCP拥塞控制算法提供了一种简单修正方法。
+	//表 26-5 tcp_slow_start_after_idle 的取值
+	//tcp slow _start after idle 描述
+	//0	支持RFC2861中的算法，则在闲置期后拥塞窗口超时而失效。闲置期定义为当前RTO估计値
+	//1 (默认偵)	不支持RFC2861中的算法，则拥塞窗口不会因为闲置而产生超时
+
+
 	const struct tcp_congestion_ops *ca_ops = inet_csk(sk)->icsk_ca_ops;
 	struct tcp_sock *tp = tcp_sk(sk);
 	s32 delta;
 
-	if (!sock_net(sk)->ipv4.sysctl_tcp_slow_start_after_idle || tp->packets_out ||
-	    ca_ops->cong_control)
-		return;
-	delta = tcp_jiffies32 - tp->lsndtime;
-	if (delta > inet_csk(sk)->icsk_rto)
-		tcp_cwnd_restart(sk, delta);
+	if (!sock_net(sk)->ipv4.sysctl_tcp_slow_start_after_idle || //如果拥塞窗口闲置检测未打开
+		tp->packets_out || // 如果有发送但未确认的报文
+	    ca_ops->cong_control) // 拥塞窗口cong_control回调非空
+		return; //直接返回不做检测。
+		
+	delta = tcp_jiffies32 - tp->lsndtime; // 用当前事件减去 上次发包的时间
+	if (delta > inet_csk(sk)->icsk_rto) //如果空闲时间 大于rto，则认为拥塞窗口失效
+		tcp_cwnd_restart(sk, delta); //从慢启动开始
 }
 
 /* Determine a window scaling and initial window to offer. */
@@ -1945,13 +1975,13 @@ static inline void tcp_push_pending_frames(struct sock *sk)
  */
 static inline u32 tcp_highest_sack_seq(struct tcp_sock *tp)
 {
-	if (!tp->sacked_out)
+	if (!tp->sacked_out) //如果没有包被sack过，则直接返回snd_una
 		return tp->snd_una;
 
-	if (tp->highest_sack == NULL)
+	if (tp->highest_sack == NULL) //如果已经是发送队列的最后一个包了，则直接返回snd_nxt
 		return tp->snd_nxt;
 
-	return TCP_SKB_CB(tp->highest_sack)->seq;
+	return TCP_SKB_CB(tp->highest_sack)->seq; //否则返回skb传输控制块的seq序列号？？？？？？？
 }
 
 static inline void tcp_advance_highest_sack(struct sock *sk, struct sk_buff *skb)

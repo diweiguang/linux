@@ -1656,6 +1656,20 @@ static inline void unlock_sock_fast(struct sock *sk, bool slow)
  * accesses from user process context.
  */
 
+	/* 进程使用它来“锁定”套接字状态，以便
+  * 中断和下半部处理程序不会改变它
+  *从我们下面。 它基本上阻止了任何传入
+  * 数据包，这样我们就不会得到任何新数据或任何
+  * 改变套接字状态的数据包。
+  *
+  * 锁定时，BH 处理会将新数据包添加到
+  * 积压队列。 该队列由
+  * 套接字锁释放前的所有者。
+  *
+  * 自 ~2.3.5 起它也是独占睡眠锁序列化
+  * 从用户进程上下文访问。
+  */ 
+
 static inline void sock_owned_by_me(const struct sock *sk)
 {
 #ifdef CONFIG_LOCKDEP

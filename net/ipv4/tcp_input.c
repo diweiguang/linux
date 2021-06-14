@@ -3451,19 +3451,19 @@ static inline bool tcp_may_update_window(const struct tcp_sock *tp,
 					const u32 ack, const u32 ack_seq,
 					const u32 nwin)
 {
-	return	after(ack, tp->snd_una) ||
-		after(ack_seq, tp->snd_wl1) ||
-		(ack_seq == tp->snd_wl1 && nwin > tp->snd_wnd);
+	return	after(ack, tp->snd_una) || // 确认的窗口在snd_una之后
+		after(ack_seq, tp->snd_wl1) || // 或者 ack包的seq是最新的即最新的包
+		(ack_seq == tp->snd_wl1 && nwin > tp->snd_wnd); // ack包的seq没变即对端没有发送过数据，但是对端接收窗口增大了则会更新窗口
 }
 
 /* If we update tp->snd_una, also update tp->bytes_acked */
 static void tcp_snd_una_update(struct tcp_sock *tp, u32 ack)
 {
-	u32 delta = ack - tp->snd_una;
+	u32 delta = ack - tp->snd_una; //确认的数据长度
 
 	sock_owned_by_me((struct sock *)tp);
-	tp->bytes_acked += delta;
-	tp->snd_una = ack;
+	tp->bytes_acked += delta; //更新确认的总字节数
+	tp->snd_una = ack; //更新snd_una
 }
 
 /* If we update tp->rcv_nxt, also update tp->bytes_received */
@@ -3484,25 +3484,26 @@ static void tcp_rcv_nxt_update(struct tcp_sock *tp, u32 seq)
 static int tcp_ack_update_window(struct sock *sk, const struct sk_buff *skb, u32 ack,
 				 u32 ack_seq)
 {
-	struct tcp_sock *tp = tcp_sk(sk);
+	struct tcp_sock *tp = tcp_sk(sk); 
 	int flag = 0;
-	u32 nwin = ntohs(tcp_hdr(skb)->window);
+	u32 nwin = ntohs(tcp_hdr(skb)->window); //网络字节序默认采用大端方式存放
 
-	if (likely(!tcp_hdr(skb)->syn))
-		nwin <<= tp->rx_opt.snd_wscale;
+	if (likely(!tcp_hdr(skb)->syn)) //如果不是syn包
+		nwin <<= tp->rx_opt.snd_wscale; //对端接收窗口等于 新窗口左移snd_wscale
 
-	if (tcp_may_update_window(tp, ack, ack_seq, nwin)) {
-		flag |= FLAG_WIN_UPDATE;
-		tcp_update_wl(tp, ack_seq);
+	if (tcp_may_update_window(tp, ack, ack_seq, nwin)) { //检测是否更新拥塞窗口
+		flag |= FLAG_WIN_UPDATE; //打赏更新窗口的标记
+		tcp_update_wl(tp, ack_seq); //更新最新接收的窗口信息 //记录更新发送窗口的那个ACK段的序号，用来判断是否需要更新窗口。
+									//如果后续收到的ACK段的序号大于snd_wll,则说明需更新窗口，否则无需更新
 
-		if (tp->snd_wnd != nwin) {
+		if (tp->snd_wnd != nwin) { //如果发送窗口不等于新的窗口值，则更改之
 			tp->snd_wnd = nwin;
 
 			/* Note, it is the only place, where
 			 * fast path is recovered for sending TCP.
 			 */
-			tp->pred_flags = 0;
-			tcp_fast_path_check(sk);
+			tp->pred_flags = 0; //预测标志设置为0
+			tcp_fast_path_check(sk); //设置快速路径标志，
 
 			if (!tcp_write_queue_empty(sk))
 				tcp_slow_start_after_idle_check(sk);
@@ -3606,6 +3607,7 @@ static void tcp_store_ts_recent(struct tcp_sock *tp)
 
 static void tcp_replace_ts_recent(struct tcp_sock *tp, u32 seq)
 {
+	//如果对端带了时间戳，且本次收到的序列号 比上次更新窗口的序列号老，则可能发生了序列号回环，将检测回环
 	if (tp->rx_opt.saw_tstamp && !after(seq, tp->rcv_wup)) {
 		/* PAWS bug workaround wrt. ACK frames, the PAWS discard
 		 * extra check below makes sure this can only happen
@@ -3656,6 +3658,7 @@ static inline void tcp_in_ack_event(struct sock *sk, u32 flags)
 {
 	const struct inet_connection_sock *icsk = inet_csk(sk);
 
+	//调用in_ack_event回调
 	if (icsk->icsk_ca_ops->in_ack_event)
 		icsk->icsk_ca_ops->in_ack_event(sk, flags);
 }
@@ -3744,14 +3747,14 @@ static int tcp_ack(struct sock *sk, const struct sk_buff *skb, int flag)
 		//接收方通告过的最大接收窗口值
 		if (before(ack, prior_snd_una - tp->max_window)) { //如果ack 完全在发送窗口外
 			if (!(flag & FLAG_NO_CHALLENGE_ACK)) //该函数中flag是0，所以这里必定走进tcp_send_challenge_ack
-												1. 数据包触发挑战ack
+												//1. 数据包触发挑战ack
 				tcp_send_challenge_ack(sk, skb); //发送挑战ack如果接收报文的确认序号小于本地套接口待确认序号，表明为一个已经确认过的序号，
 												 //并且其确认序号在套接口当前待确认序号减去本地发送窗口之前，内核认为此报文很可能并非对端发送，
 												 //即其为攻击者构造出来的报文，合法的报文确认序号ACK的范围：((SND.UNA - MAX.SND.WND) <= SEG.ACK <= SND.NXT)。
 												 //否则，不在此范围内认为是盲数据注入攻击Blind Data Injection Attack。但是，有可能并非攻击者发送，
 												 //而是来自对端的报文，此时回复挑战ACK报文，使对端有机会修正其确认序号ACK
-												 2. 复位RST攻击
-												 3. SYN攻击
+												 //2. 复位RST攻击
+												 //3. SYN攻击
 		}
 		goto old_ack;
 	}
@@ -3773,37 +3776,41 @@ static int tcp_ack(struct sock *sk, const struct sk_buff *skb, int flag)
 #endif
 	}
 
+	//如果sack开启，则返回sack的最高序列号，否则返回snd_una
 	prior_fack = tcp_is_sack(tp) ? tcp_highest_sack_seq(tp) : tp->snd_una;
-	rs.prior_in_flight = tcp_packets_in_flight(tp);
+	rs.prior_in_flight = tcp_packets_in_flight(tp); //设置速率样本中网络中的报文数
 
 	/* ts_recent update must be made after we are sure that the packet
 	 * is in window.
 	 */
-	if (flag & FLAG_UPDATE_TS_RECENT)
+	if (flag & FLAG_UPDATE_TS_RECENT) //如果最近更新了时间戳，则检测是否发生了序列号回环，如果发生回环重新更新时间戳
 		tcp_replace_ts_recent(tp, TCP_SKB_CB(skb)->seq);
 
-	if ((flag & (FLAG_SLOWPATH | FLAG_SND_UNA_ADVANCED)) ==
+	if ((flag & (FLAG_SLOWPATH | FLAG_SND_UNA_ADVANCED)) == //如果走的快速路径，且本次更新snd_una
 	    FLAG_SND_UNA_ADVANCED) {
 		/* Window is constant, pure forward advance.
 		 * No more checks are required.
 		 * Note, we use the fact that SND.UNA>=SND.WL2.
 		 */
-		tcp_update_wl(tp, ack_seq);
-		tcp_snd_una_update(tp, ack);
-		flag |= FLAG_WIN_UPDATE;
+		tcp_update_wl(tp, ack_seq); //更新snd_wl1 最近一次更新发送串口的时间
+		tcp_snd_una_update(tp, ack); //更新snd_una
+		flag |= FLAG_WIN_UPDATE; //打上更新发送窗口的标记
 
+		//收到ack后，调用拥塞控制模块注入的回调函数，此处会调用并更新
 		tcp_in_ack_event(sk, CA_ACK_WIN_UPDATE);
 
+		//更新ack统计
 		NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPHPACKS);
 	} else {
-		u32 ack_ev_flags = CA_ACK_SLOWPATH;
+		//下面是慢速路径
+		u32 ack_ev_flags = CA_ACK_SLOWPATH; //设置慢速路径标记
 
-		if (ack_seq != TCP_SKB_CB(skb)->end_seq)
+		if (ack_seq != TCP_SKB_CB(skb)->end_seq) //如果结束的序列号，不等于确认的序号，说明携带数据，打赏数据包标记
 			flag |= FLAG_DATA;
 		else
-			NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPPUREACKS);
+			NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPPUREACKS); //统计不携带数据的ack个数。
 
-		flag |= tcp_ack_update_window(sk, skb, ack, ack_seq);
+		flag |= tcp_ack_update_window(sk, skb, ack, ack_seq); //实际更新发送窗口 
 
 		if (TCP_SKB_CB(skb)->sacked)
 			flag |= tcp_sacktag_write_queue(sk, skb, prior_snd_una,
