@@ -1703,25 +1703,26 @@ static inline int __tcp_mtu_to_mss(struct sock *sk, int pmtu)
 	/* Calculate base mss without TCP options:
 	   It is MMS_S - sizeof(tcphdr) of rfc1122
 	 */
+	 //mss 等于 路径mtu 减去 ip头长度和tcp头长度
 	mss_now = pmtu - icsk->icsk_af_ops->net_header_len - sizeof(struct tcphdr);
 
 	/* IPv6 adds a frag_hdr in case RTAX_FEATURE_ALLFRAG is set */
-	if (icsk->icsk_af_ops->net_frag_header_len) {
-		const struct dst_entry *dst = __sk_dst_get(sk);
+	if (icsk->icsk_af_ops->net_frag_header_len) { //如果是ipv6 ?
+		const struct dst_entry *dst = __sk_dst_get(sk); //查找路由缓存
 
-		if (dst && dst_allfrag(dst))
-			mss_now -= icsk->icsk_af_ops->net_frag_header_len;
+		if (dst && dst_allfrag(dst)) //如果路由缓存存在
+			mss_now -= icsk->icsk_af_ops->net_frag_header_len; //ipv6增加了一个frag_hdr字段，所以需要减去之
 	}
 
 	/* Clamp it (mss_clamp does not include tcp options) */
-	if (mss_now > tp->rx_opt.mss_clamp)
+	if (mss_now > tp->rx_opt.mss_clamp) //如果mss大于mss的最大值，则更改之
 		mss_now = tp->rx_opt.mss_clamp;
 
 	/* Now subtract optional transport overhead */
-	mss_now -= icsk->icsk_ext_hdr_len;
+	mss_now -= icsk->icsk_ext_hdr_len; //减去IP首部中选项的长度
 
 	/* Then reserve room for full set of TCP options and 8 bytes of data */
-	mss_now = max(mss_now, sock_net(sk)->ipv4.sysctl_tcp_min_snd_mss);
+	mss_now = max(mss_now, sock_net(sk)->ipv4.sysctl_tcp_min_snd_mss); //mss取 mss_now和sysctl_tcp_min_snd_mss中的较大值。
 	return mss_now;
 }
 
@@ -1729,7 +1730,7 @@ static inline int __tcp_mtu_to_mss(struct sock *sk, int pmtu)
 int tcp_mtu_to_mss(struct sock *sk, int pmtu)
 {
 	/* Subtract TCP options size, not including SACKs */
-	return __tcp_mtu_to_mss(sk, pmtu) -
+	return __tcp_mtu_to_mss(sk, pmtu) - // 
 	       (tcp_sk(sk)->tcp_header_len - sizeof(struct tcphdr));
 }
 
@@ -1801,17 +1802,17 @@ unsigned int tcp_sync_mss(struct sock *sk, u32 pmtu)
 	struct inet_connection_sock *icsk = inet_csk(sk);
 	int mss_now;
 
-	if (icsk->icsk_mtup.search_high > pmtu)
+	if (icsk->icsk_mtup.search_high > pmtu) //如果检测的最大值大于pmtu_cookies则更新pmtu.
 		icsk->icsk_mtup.search_high = pmtu;
 
-	mss_now = tcp_mtu_to_mss(sk, pmtu);
-	mss_now = tcp_bound_to_half_wnd(tp, mss_now);
+	mss_now = tcp_mtu_to_mss(sk, pmtu); //获取当前的mss
+	mss_now = tcp_bound_to_half_wnd(tp, mss_now); //检查mss,限制mss不能超过对端最大接收窗口的一半，最大只能是一半
 
 	/* And store cached results */
-	icsk->icsk_pmtu_cookie = pmtu;
-	if (icsk->icsk_mtup.enabled)
-		mss_now = min(mss_now, tcp_mtu_to_mss(sk, icsk->icsk_mtup.search_low));
-	tp->mss_cache = mss_now;
+	icsk->icsk_pmtu_cookie = pmtu; //存储pmtu值
+	if (icsk->icsk_mtup.enabled) //是否 启用PMTU
+		mss_now = min(mss_now, tcp_mtu_to_mss(sk, icsk->icsk_mtup.search_low)); //取当前计算的mss和根据search_low计算出来的较小值
+	tp->mss_cache = mss_now; //更新mss cache
 
 	return mss_now;
 }

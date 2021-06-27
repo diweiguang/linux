@@ -1169,15 +1169,198 @@ static void tcp_count_delivered(struct tcp_sock *tp, u32 delivered,
  * the exact amount is rather hard to quantify. However, tp->max_window can
  * be used as an exaggerated estimate.
  */
+ 
+ /*此过程标记SACK到达时的重传队列。
+
+*
+
+*我们有三个标签位：麻袋，重传（R）和丢失（L）。
+
+*队列中设置这些位的数据包将被计数为变量
+
+*被解雇，重新训练，然后失去了，相应地。
+
+*
+
+*有效组合为：
+
+*标记输入灯说明
+
+*0 1-orig段正在飞行。
+
+*S 0-没有苍蝇，猎户座到达接收器。
+
+*我0-没有苍蝇，猎户座被网丢了。
+
+*R 2-orig和重传都在飞行中。
+
+*1-orig丢失，重新传输正在飞行。
+
+*S | R 1-orig到达接收器，重发仍在飞行中。
+
+*（L | S | R在逻辑上有效，当L | R被解雇时可能发生，
+
+*但它相当于普通S，并将其编码为S。
+
+*L | S在逻辑上无效，这意味着8航班中的-1个包）
+
+*
+
+*这6种状态构成有限状态机，由以下事件控制：
+
+*1.新ACK（+SACK）到达(tcp\u sacktag\u write\u queue（））
+
+*2.再传输(tcp\u重新传输\u skb（），tcp\uXMIT\u重新传输\u queue（））
+
+*3.两种口味的损耗检测事件：
+
+*A。记分板估计员决定包丢失。
+
+*A'。雷诺“三个重复”标志着队列的头丢失。
+
+*B。此时，袋子到达时正在解雇SND.NXT
+
+*段被重新传输。
+
+*4.D-SACK新增规则：D-SACK将任何标记更改为S。
+
+*
+
+*很高兴注意到，状态图是可交换的，
+
+*所以我们不被我们的行动顺序所困扰，
+
+*当多个事件同时到达时(请参见下面的功能）。
+
+*
+
+*重新排序检测。
+
+* --------------------
+
+*重排序度量是最大距离，它可以替换数据包
+
+*在数据包流中。我们可以用麻袋来估计：
+
+*
+
+*1.袋装旧孔，对应段未
+
+*再传输->重新排序。唉，我们不能用它
+
+*当段被重新传输时。
+
+*2.最后一个缺陷用D-SACK解决。D-SACK到达
+
+*对于重传和已打包的段->重新排序。。
+
+*当我们不能使用时，这两种启发式方法都不在丢失状态下使用
+
+*准确地解释重发。
+
+*
+
+*SACK块验证。
+
+* ----------------------
+
+*
+
+*SACK块范围验证检查接收的SACK块是否适合
+
+*预期的序列限制，即在SND.UNA和SND.NXT之间。
+
+*注意，SND.UNA不包含在范围内，尽管它有效，因为
+
+*这意味着接收人与自己的报告相当不一致
+
+*当它应该推进SND.UNA时，就放弃。这样的袋子，这是
+
+*但是，根据RFC2018，该规范明确规定，完全有效
+
+*“麻袋块必须反映最新的部分。即使是最新的
+
+*段将被丢弃…，不是说它看起来很聪明
+
+*如果是头巾。由于潜在接收器驱动的攻击，我们
+
+*选择避免立即执行步入写入队列，原因是
+
+*违约并将skb的损失恢复推迟到标准损失恢复
+
+*最终会触发的程序（没有什么可以阻止我们这样做）。
+
+*
+
+*机具也会堵塞，以开始包裹。问题在于
+
+*事实上，尽管开始时间在结束前（即未反转），
+
+*没有保证它将在snd\uNXT（n）之前。问题
+
+*当开始\u seq位于结束\u seq wrap（e_uw）和snd\unxt之间时发生
+
+*包装（s\U w）：
+
+*
+
+*<-输出wnd-><-wrapzone->
+
+*你不知道
+
+* | | | | | | |
+
+*|<------------------++-TCP seqno空格-------------------------------------------->|
+
+*…--><2 ^31->|<-------------。。。
+
+*…-------->2 ^31------>|<--------------。。。
+
+*
+
+*当前代码不会很容易受到攻击，但最好还是放弃这样的代码
+
+*疯狂的袋子。仅对开始执行此检查会稍微关闭
+
+*类似情况（snd\uNXT包装后结束）与前面的反向签入类似
+
+*snd\uNXT包装->snd\u una区域将变成“定义良好”，即。，
+
+*等于理想情况（无限seqno空间，无包装引起的问题）。
+
+*
+
+*在D-SACK中，下界被扩展到下面的序列空间
+
+*SND.UNA向下撤消标记，这是最后一个感兴趣的点。然而
+
+*同样，D-SACK块不能穿过snd\u una（原因与
+
+*对于正常的袋子块，如上所述）。但一切都很简单
+
+*结束时，TCP可能会收到有效的D-SACK，低于此。只要他们住在
+
+*完全低于undo\u标记，它们无论如何都不会影响行为，并且可以
+
+*因此，应安全地忽略。在罕见情况下（或多或少
+
+*理论上，由于skb，D-SACK很好地穿过这个边界
+
+*碎片和包重新排序过去skb的重传。考虑
+
+*正确地说，可接受的范围必须扩大得更多，尽管
+
+*确切的数量很难量化。但是，tp->m
+*/
 static bool tcp_is_sackblock_valid(struct tcp_sock *tp, bool is_dsack,
 				   u32 start_seq, u32 end_seq)
 {
 	/* Too far in future, or reversed (interpretation is ambiguous) */
-	if (after(end_seq, tp->snd_nxt) || !before(start_seq, end_seq))
+	if (after(end_seq, tp->snd_nxt) || !before(start_seq, end_seq))//结束序号如果在snd_nxt之后说明确认了还未发送的数据，sack无效，结束序号在开始序号之后，也是无效。
 		return false;
 
 	/* Nasty start_seq wrap-around check (see comments above) */
-	if (!before(start_seq, tp->snd_nxt))
+	if (!before(start_seq, tp->snd_nxt)) //开始序号在未发送的区间，表示sack块无效。
 		return false;
 
 	/* In outstanding window? ...This is valid exit for D-SACKs too.
@@ -1774,29 +1957,29 @@ tcp_sacktag_write_queue(struct sock *sk, const struct sk_buff *ack_skb,
 	struct tcp_sack_block sp[TCP_NUM_SACKS];
 	struct tcp_sack_block *cache;
 	struct sk_buff *skb;
-	int num_sacks = min(TCP_NUM_SACKS, (ptr[1] - TCPOLEN_SACK_BASE) >> 3);
+	int num_sacks = min(TCP_NUM_SACKS, (ptr[1] - TCPOLEN_SACK_BASE) >> 3); //sack块的最大个数
 	int used_sacks;
 	bool found_dup_sack = false;
 	int i, j;
 	int first_sack_index;
 
 	state->flag = 0;
-	state->reord = tp->snd_nxt;
+	state->reord = tp->snd_nxt; //记录下一个要发送的序列号
 
 	if (!tp->sacked_out)
 		tcp_highest_sack_reset(sk);
 
-	found_dup_sack = tcp_check_dsack(sk, ack_skb, sp_wire,
+	found_dup_sack = tcp_check_dsack(sk, ack_skb, sp_wire, //检查是否存在DSACK
 					 num_sacks, prior_snd_una, state);
 
 	/* Eliminate too old ACKs, but take into
 	 * account more or less fresh ones, they can
 	 * contain valid SACK info.
 	 */
-	if (before(TCP_SKB_CB(ack_skb)->ack_seq, prior_snd_una - tp->max_window))
+	if (before(TCP_SKB_CB(ack_skb)->ack_seq, prior_snd_una - tp->max_window)) //如果序列号是旧的且超过了一个接收窗口值，则直接返回0
 		return 0;
 
-	if (!tp->packets_out)
+	if (!tp->packets_out) //如果发送未确认的数据是0直接跳出
 		goto out;
 
 	used_sacks = 0;
@@ -3492,7 +3675,7 @@ static int tcp_ack_update_window(struct sock *sk, const struct sk_buff *skb, u32
 		nwin <<= tp->rx_opt.snd_wscale; //对端接收窗口等于 新窗口左移snd_wscale
 
 	if (tcp_may_update_window(tp, ack, ack_seq, nwin)) { //检测是否更新拥塞窗口
-		flag |= FLAG_WIN_UPDATE; //打赏更新窗口的标记
+		flag |= FLAG_WIN_UPDATE; //打上更新窗口的标记
 		tcp_update_wl(tp, ack_seq); //更新最新接收的窗口信息 //记录更新发送窗口的那个ACK段的序号，用来判断是否需要更新窗口。
 									//如果后续收到的ACK段的序号大于snd_wll,则说明需更新窗口，否则无需更新
 
@@ -3505,12 +3688,12 @@ static int tcp_ack_update_window(struct sock *sk, const struct sk_buff *skb, u32
 			tp->pred_flags = 0; //预测标志设置为0
 			tcp_fast_path_check(sk); //设置快速路径标志，
 
-			if (!tcp_write_queue_empty(sk))
-				tcp_slow_start_after_idle_check(sk);
+			if (!tcp_write_queue_empty(sk)) //如果发送队列不为空
+				tcp_slow_start_after_idle_check(sk); //检查拥塞窗口是否超过
 
-			if (nwin > tp->max_window) {
+			if (nwin > tp->max_window) { //新窗口大于最大通告的拥塞窗口，则更新最大拥塞窗口
 				tp->max_window = nwin;
-				tcp_sync_mss(sk, inet_csk(sk)->icsk_pmtu_cookie);
+				tcp_sync_mss(sk, inet_csk(sk)->icsk_pmtu_cookie); //更新MSS
 			}
 		}
 	}
@@ -3810,7 +3993,10 @@ static int tcp_ack(struct sock *sk, const struct sk_buff *skb, int flag)
 		else
 			NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPPUREACKS); //统计不携带数据的ack个数。
 
-		flag |= tcp_ack_update_window(sk, skb, ack, ack_seq); //实际更新发送窗口 
+		flag |= tcp_ack_update_window(sk, skb, ack, ack_seq); //更新发送窗口，更新MSS，然后打上预测标记
+
+		//发送队列中的每个数据块都有一个标志位“SACKed”，标识该数据块是否被SACK过。对于巳 经被SACK过的块，在重新发送数据时将被跳过。发送方接收到接收方SACK信息后，根据 SACK中数据标识重发送队列中相应数据块的“SACKed”标志。如果接收不到接收方数据，超时 后，車发送队列中所冇数据块的SACKed位都会被清除，因为仰能接收方己经出现异常。
+		//通过SACK选项可以使TCP发送方只发送丢失的数据而不用发送笫一个丢失包之后所有 的数据，提高了数据的传输效率
 
 		if (TCP_SKB_CB(skb)->sacked)
 			flag |= tcp_sacktag_write_queue(sk, skb, prior_snd_una,

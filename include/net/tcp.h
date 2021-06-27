@@ -634,9 +634,18 @@ unsigned int tcp_current_mss(struct sock *sk);
 u32 tcp_clamp_probe0_to_user_timeout(const struct sock *sk, u32 when);
 
 /* Bound MSS / TSO packet size with the half of the window */
+// tso的时候需要限制mss
 static inline int tcp_bound_to_half_wnd(struct tcp_sock *tp, int pktsize)
 {
 	int cutoff;
+
+	/*当peer使用小窗口时，打包是没有用的
+	* 为了SWS或确保
+	* 管道中有足够的数据包用于快速恢复。
+	*
+	* 另一方面，对于超大MSS设备，处理
+	* 以这种方式比MSS窗口小是有意义的。
+	*/
 
 	/* When peer uses tiny windows, there is no use in packetizing
 	 * to sub-MSS pieces for the sake of SWS or making sure there
@@ -645,15 +654,15 @@ static inline int tcp_bound_to_half_wnd(struct tcp_sock *tp, int pktsize)
 	 * On the other hand, for extremely large MSS devices, handling
 	 * smaller than MSS windows in this way does make sense.
 	 */
-	if (tp->max_window > TCP_MSS_DEFAULT)
-		cutoff = (tp->max_window >> 1);
+	if (tp->max_window > TCP_MSS_DEFAULT) //如果最大发送窗口大于 默认mss值536 B
+		cutoff = (tp->max_window >> 1); //最大窗口除2
 	else
-		cutoff = tp->max_window;
+		cutoff = tp->max_window; //如果小于mss，则取max_window
 
-	if (cutoff && pktsize > cutoff)
-		return max_t(int, cutoff, 68U - tp->tcp_header_len);
+	if (cutoff && pktsize > cutoff)  //当前mss如果大于cutoff（一般的窗口值）
+		return max_t(int, cutoff, 68U - tp->tcp_header_len); //返回cutoff 和 68-tcp长度的较大的一个。即mss不会大于对端最大接收窗口的一半
 	else
-		return pktsize;
+		return pktsize; //返回mss
 }
 
 /* tcp.c */
